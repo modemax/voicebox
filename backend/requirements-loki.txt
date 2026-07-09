@@ -1,0 +1,53 @@
+# Loki fork — Kokoro-only dependency set (KB-0358).
+#
+# This is sanctioned divergence #1 of 3 (see LOKI-FORK.md). Upstream's
+# requirements.txt bundles all 7 TTS engines — git-only deps, a custom
+# find-links index, and --no-deps ordering hacks around torch/numpy/
+# transformers conflicts. Engine libs are lazy-imported, so installing
+# only Kokoro's slice boots the server fine; the other engines simply
+# raise ImportError if invoked (they won't be — Loki's voice.yaml only
+# routes to kokoro).
+#
+# Runtime prerequisite (macOS): brew install espeak-ng, then export
+#   PHONEMIZER_ESPEAK_LIBRARY=/opt/homebrew/lib/libespeak-ng.dylib
+#   ESPEAK_DATA_PATH=/opt/homebrew/share/espeak-ng-data
+# The bundled espeakng-loader wheel points at a dead CI build path;
+# without these, misaki's G2P fallback crashes (proven 2026-07-09).
+
+# FastAPI and server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# ML runtime (Kokoro is a torch model; no transformers/accelerate needed)
+torch>=2.2.0
+huggingface_hub>=0.20.0
+
+# Kokoro TTS (82M) — the one engine Loki runs
+kokoro>=0.9.4
+misaki[en]>=0.9.4
+# spacy model for misaki English G2P — pre-install so the daemon never
+# calls spacy.cli.download() at runtime
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
+# Audio processing
+librosa>=0.10.0
+soundfile>=0.12.0
+numpy>=1.24.0,<2.0
+numba>=0.60.0,<0.61.0
+pedalboard>=0.9.0
+pyloudnorm
+
+# HTTP client
+httpx>=0.27.0
+
+# MCP server + SSE status streams (imported at app startup)
+fastmcp>=3.0,<4.0
+sse-starlette>=2.0
+
+# Utilities
+python-multipart>=0.0.6
+Pillow>=10.0.0

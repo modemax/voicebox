@@ -10,6 +10,13 @@ from .utils.capture_chords import (
     default_push_to_talk_chord,
     default_toggle_to_talk_chord,
 )
+from .backends import TTS_ENGINES
+
+# Engine allow-list derived from the backend registry — the single source
+# of truth. Adding an engine to TTS_ENGINES makes it schema-valid here
+# with no hand-edited enum to forget. (loki fork)
+ENGINE_PATTERN = "^(" + "|".join(TTS_ENGINES) + ")$"
+
 
 
 class VoiceProfileCreate(BaseModel):
@@ -85,7 +92,7 @@ class GenerationRequest(BaseModel):
     seed: Optional[int] = Field(None, ge=0)
     model_size: Optional[str] = Field(default="1.7B", pattern="^(1\\.7B|0\\.6B|1B|3B)$")
     instruct: Optional[str] = Field(None, max_length=500)
-    engine: Optional[str] = Field(default="qwen", pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$")
+    engine: Optional[str] = Field(default="qwen", pattern=ENGINE_PATTERN)
     personality: bool = Field(
         default=False,
         description="When true and the profile has a personality prompt, the input text is rewritten in-character before TTS.",
@@ -317,7 +324,7 @@ class MCPClientBindingResponse(BaseModel):
     profile_id: Optional[str] = None
     default_engine: Optional[str] = Field(
         None,
-        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$",
+        pattern=ENGINE_PATTERN,
     )
     default_personality: bool = False
     last_seen_at: Optional[datetime] = None
@@ -336,7 +343,7 @@ class MCPClientBindingUpsert(BaseModel):
     profile_id: Optional[str] = None
     default_engine: Optional[str] = Field(
         None,
-        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$",
+        pattern=ENGINE_PATTERN,
     )
     default_personality: bool = False
 
@@ -355,7 +362,7 @@ class SpeakRequest(BaseModel):
     )
     engine: Optional[str] = Field(
         None,
-        pattern="^(qwen|qwen_custom_voice|luxtts|chatterbox|chatterbox_turbo|tada|kokoro)$",
+        pattern=ENGINE_PATTERN,
     )
     personality: Optional[bool] = Field(
         None,
