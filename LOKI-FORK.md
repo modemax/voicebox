@@ -10,7 +10,7 @@ it would buy nothing at runtime and cost every upstream merge).
 - **`loki`** — the branch we run. Default branch of this fork. Carries the divergences below.
 - **`main`** — pristine mirror of `upstream/main`. Never commit here.
 
-## Divergence budget — exactly three sanctioned changes
+## Divergence budget — exactly four sanctioned changes
 
 Anything beyond these requires a wiki decision note in `~/loki/wiki/decisions/` first.
 
@@ -24,6 +24,16 @@ Anything beyond these requires a wiki decision note in `~/loki/wiki/decisions/` 
 3. **Registry-derived engine enums** — schema validation reads `TTS_ENGINES` instead of
    hand-copied `pattern=` regexes. (Candidate for an upstream PR — if accepted, this diff
    disappears.)
+4. **Blended Kokoro voice profiles** (`services/profiles.py::_validate_profile_fields`) — accepts
+   comma-delimited `preset_voice_id` combos (e.g. `"bm_george,bm_lewis"`) when every component is
+   individually a valid preset. Kokoro's own `KPipeline.load_voice()` already averages
+   comma-joined voice tensors; this only widens the one validator gate standing in front of it.
+   No changes to the generation pipeline. Tests: `backend/tests/test_profiles_blend.py`.
+   Rationale: `~/loki/wiki/decisions/voicebox-fork-divergence-4-blended-voice.md`.
+   **Known limitation:** `PUT /profiles/{id}` does not let you change an existing preset
+   profile's `preset_voice_id` (upstream re-reads it from the DB row, ignores the request body)
+   — to change a preset profile's voice, delete and recreate it. Not patched — out of the
+   decision note's scope; revisit if it becomes a recurring friction.
 
 ## Update ritual (rolling upstream in)
 
@@ -32,7 +42,7 @@ cd ~/loki/vendor/voicebox
 git fetch upstream
 git checkout main && git merge --ff-only upstream/main && git push origin main
 git checkout loki && git merge main
-# On conflict: our 3 divergences win in their own files; upstream wins everywhere else.
+# On conflict: our 4 divergences win in their own files; upstream wins everywhere else.
 # Check database/migrations.py diffs by hand — upstream migrations are version-less
 # idempotent column checks; we never modify upstream-owned tables (schema-ownership rule).
 backend/venv/bin/python -m pytest backend/tests/ -q --deselect-heavy   # see below
@@ -65,7 +75,7 @@ modes. Not a fork regression.)
 Known-failing under requirements-loki.txt (verified identical on pristine upstream, 2026-07-09 —
 they exercise the transformers/HF offline-patch layer that the Kokoro-only dep set omits):
 `test_offline_guard.py`, `test_offline_patch.py`, `test_progress.py` (10 cases). Baseline:
-**80 passed, 10 failed** — any new failure beyond these is a real regression.
+**90 passed, 10 failed** — any new failure beyond these is a real regression.
 
 ## Runtime prerequisites (macOS)
 

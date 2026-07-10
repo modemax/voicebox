@@ -91,8 +91,18 @@ def _validate_profile_fields(
             return "Preset profiles must use their preset_engine as default_engine"
 
         available_voice_ids = _get_preset_voice_ids(preset_engine)
-        if available_voice_ids and preset_voice_id not in available_voice_ids:
-            return f"Preset voice '{preset_voice_id}' is not valid for engine '{preset_engine}'"
+        if available_voice_ids:
+            # Comma-delimited combos are a blend (Kokoro's KPipeline.load_voice
+            # averages the named voice tensors) — accept when every component
+            # is individually a valid preset. Single voice = unchanged behavior.
+            # (loki fork, divergence #4 — wiki/decisions/voicebox-fork-divergence-4-blended-voice.md)
+            components = [v.strip() for v in preset_voice_id.split(",")]
+            unknown = [v for v in components if v not in available_voice_ids]
+            if unknown:
+                return (
+                    f"Preset voice '{preset_voice_id}' is not valid for engine "
+                    f"'{preset_engine}' — unknown component(s): {', '.join(unknown)}"
+                )
         return None
 
     if voice_type == "designed":
