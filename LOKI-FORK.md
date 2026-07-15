@@ -10,7 +10,7 @@ it would buy nothing at runtime and cost every upstream merge).
 - **`loki`** — the branch we run. Default branch of this fork. Carries the divergences below.
 - **`main`** — pristine mirror of `upstream/main`. Never commit here.
 
-## Divergence budget — exactly four sanctioned changes
+## Divergence budget — exactly five sanctioned changes
 
 Anything beyond these requires a wiki decision note in `~/loki/wiki/decisions/` first.
 
@@ -34,6 +34,18 @@ Anything beyond these requires a wiki decision note in `~/loki/wiki/decisions/` 
    profile's `preset_voice_id` (upstream re-reads it from the DB row, ignores the request body)
    — to change a preset profile's voice, delete and recreate it. Not patched — out of the
    decision note's scope; revisit if it becomes a recurring friction.
+5. **Effects chain on the synchronous path** (`routes/generate_sync.py` reads the resolved
+   profile's `effects_chain` and passes it to `services/generation.py::generate_audio_sync`,
+   which gains an additive optional `effects_chain` param + a guarded `apply_effects()` call).
+   Upstream applies its pedalboard effects (pitch_shift, reverb, delay, chorus, compressor,
+   gain, highpass, lowpass) only on the async studio generation (`run_generation`/`_save_generate`);
+   `/generate/sync` skipped them entirely. Effects run before normalize (matching the
+   `/generations` preview path) and a malformed chain is warned-and-skipped, never fatal. The
+   route (divergence-owned) holds the fetch-from-profile policy; the touch to the upstream-owned
+   service is a single backward-compatible optional param. **Inert until a profile actually sets
+   an `effects_chain`** (the "Loki" profile has none today — this only enables the capability).
+   Tests: `backend/tests/test_generate_sync.py` (effects pass-through + graceful-skip cases).
+   Rationale: `~/loki/wiki/decisions/voicebox-fork-divergence-5-sync-effects.md`.
 
 ## Update ritual (rolling upstream in)
 

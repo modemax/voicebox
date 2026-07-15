@@ -254,6 +254,7 @@ async def generate_audio_sync(
     normalize: bool = True,
     max_chunk_chars: Optional[int] = None,
     crossfade_ms: Optional[int] = None,
+    effects_chain: Optional[list] = None,
 ) -> bytes:
     """Run a TTS generation synchronously and return the resulting wav bytes.
 
@@ -302,6 +303,27 @@ async def generate_audio_sync(
     audio, sample_rate = await generate_chunked(
         tts_model, text, voice_prompt, **gen_kwargs
     )
+
+    # Loki fork divergence #5: apply the profile's effects chain on the
+    # synchronous path (upstream only applies effects on the async studio
+    # path). Effects run BEFORE normalize so output level stays consistent
+    # after level-changing effects (compressor/gain) — matches the
+    # /generations preview path in routes/generations.py. Inert when the
+    # caller passes no chain, which is the default and today's reality (the
+    # "Loki" profile has none). A malformed chain is skipped, not fatal —
+    # an alert must still speak. See LOKI-FORK.md.
+    if effects_chain:
+        from ..utils.effects import apply_effects, validate_effects_chain
+
+        error_msg = validate_effects_chain(effects_chain)
+        if error_msg:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "sync effects chain invalid, skipping: %s", error_msg
+            )
+        else:
+            audio = apply_effects(audio, sample_rate, effects_chain)
 
     if normalize:
         audio = normalize_audio(audio)

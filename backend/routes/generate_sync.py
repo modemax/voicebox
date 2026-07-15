@@ -13,7 +13,9 @@ voice. Engine validation is registry-derived (``TTS_ENGINES``), not a
 hand-copied enum — an engine added to the registry is speakable here
 with no schema edit.
 
-Loki-fork divergence #2 of 3 — see LOKI-FORK.md at the repo root.
+Loki-fork: carries divergence #2 (this route) and #5 (applying the resolved
+profile's effects chain to the synchronous path) — see LOKI-FORK.md at the
+repo root.
 """
 
 from __future__ import annotations
@@ -102,6 +104,25 @@ async def generate_sync(
             ),
         )
 
+    # Divergence #5: carry the resolved profile's stored effects chain onto
+    # the synchronous path. Upstream applies effects only on the async studio
+    # generation; here the route owns the "read profile.effects_chain" policy
+    # and hands the parsed list to the (otherwise upstream-owned) service. A
+    # missing or unparseable chain degrades to no effects — never a 500.
+    effects_chain = None
+    raw_chain = getattr(profile, "effects_chain", None)
+    if raw_chain:
+        import json as _json
+
+        try:
+            effects_chain = _json.loads(raw_chain)
+        except Exception:
+            logger.warning(
+                "profile '%s' has an unparseable effects_chain; ignoring it",
+                profile.name,
+            )
+            effects_chain = None
+
     try:
         wav_bytes = await generation_service.generate_audio_sync(
             profile_id=profile.id,
@@ -111,6 +132,7 @@ async def generate_sync(
             model_size=data.model_size,
             seed=data.seed,
             normalize=data.normalize,
+            effects_chain=effects_chain,
         )
     except HTTPException:
         raise

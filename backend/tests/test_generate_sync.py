@@ -99,6 +99,85 @@ class TestGenerateSyncHappyPath:
         assert captured["engine"] == "kokoro"
 
 
+class TestGenerateSyncEffectsChain:
+    """Divergence #5: the resolved profile's effects_chain reaches the service."""
+
+    def test_profile_effects_chain_is_parsed_and_passed(self, client):
+        import json as _json
+
+        chain = [{"type": "reverb", "params": {"room_size": 0.4}, "enabled": True}]
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return FAKE_WAV
+
+        with (
+            patch(
+                "backend.routes.generate_sync.resolve_profile",
+                return_value=_profile(effects_chain=_json.dumps(chain)),
+            ),
+            patch(
+                "backend.services.generation.generate_audio_sync",
+                side_effect=_capture,
+            ),
+        ):
+            resp = client.post(
+                "/generate/sync",
+                json={"text": "x", "profile": "Loki"},
+            )
+        assert resp.status_code == 200
+        assert captured["effects_chain"] == chain
+
+    def test_no_effects_chain_passes_none(self, client):
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return FAKE_WAV
+
+        with (
+            patch(
+                "backend.routes.generate_sync.resolve_profile",
+                return_value=_profile(),  # no effects_chain attribute set
+            ),
+            patch(
+                "backend.services.generation.generate_audio_sync",
+                side_effect=_capture,
+            ),
+        ):
+            resp = client.post(
+                "/generate/sync",
+                json={"text": "x", "profile": "Loki"},
+            )
+        assert resp.status_code == 200
+        assert captured["effects_chain"] is None
+
+    def test_unparseable_effects_chain_degrades_to_none(self, client):
+        captured = {}
+
+        async def _capture(**kwargs):
+            captured.update(kwargs)
+            return FAKE_WAV
+
+        with (
+            patch(
+                "backend.routes.generate_sync.resolve_profile",
+                return_value=_profile(effects_chain="{not valid json"),
+            ),
+            patch(
+                "backend.services.generation.generate_audio_sync",
+                side_effect=_capture,
+            ),
+        ):
+            resp = client.post(
+                "/generate/sync",
+                json={"text": "x", "profile": "Loki"},
+            )
+        assert resp.status_code == 200
+        assert captured["effects_chain"] is None
+
+
 class TestGenerateSyncErrors:
     def test_unknown_named_profile_is_404(self, client):
         with patch(
