@@ -57,7 +57,7 @@ git checkout loki && git merge main
 # On conflict: our 4 divergences win in their own files; upstream wins everywhere else.
 # Check database/migrations.py diffs by hand — upstream migrations are version-less
 # idempotent column checks; we never modify upstream-owned tables (schema-ownership rule).
-backend/venv/bin/python -m pytest backend/tests/ -q --deselect-heavy   # see below
+backend/venv/bin/python -m pytest backend/tests/ -q <the --ignore list below>
 git push origin loki
 ```
 
@@ -77,8 +77,19 @@ backend/venv/bin/python -m pytest backend/tests/ -q \
   --ignore=backend/tests/test_package_rocm.py \
   --ignore=backend/tests/test_qwen_download.py \
   --ignore=backend/tests/test_amd_gpu_detect.py \
-  --ignore=backend/tests/test_profile_duplicate_names.py
+  --ignore=backend/tests/test_profile_duplicate_names.py \
+  --ignore=backend/tests/test_audioop_python313.py \
+  --ignore=backend/tests/test_mlx_smoke.py
 ```
+
+The last two arrived with the 2026-09-06 upstream merge and are the same class as the rest
+(absent deps, not fork regressions), but the first one is worth knowing about because of
+*how* it fails. `test_audioop_python313.py` imports `build_binary`, which imports
+`PyInstaller` — a packaging dep this Kokoro-only venv has no reason to carry. That is a
+**collection** error, not a test failure, so pytest aborts the entire run and exits **2**
+having tested nothing at all. The tail of the output looks like a tidy warnings summary
+and the wrapper's own exit code can read as 0. Check the count line, not the vibe: a run
+that says `1 error in 3.01s` never ran.
 
 (`test_profile_duplicate_names.py` is broken on pristine upstream too — it sys.path-hacks
 top-level imports that collide with the package layout; verified 2026-07-09, both invocation
@@ -86,8 +97,10 @@ modes. Not a fork regression.)
 
 Known-failing under requirements-loki.txt (verified identical on pristine upstream, 2026-07-09 —
 they exercise the transformers/HF offline-patch layer that the Kokoro-only dep set omits):
-`test_offline_guard.py`, `test_offline_patch.py`, `test_progress.py` (10 cases). Baseline:
-**90 passed, 10 failed** — any new failure beyond these is a real regression.
+`test_offline_guard.py` (5), `test_offline_patch.py` (4), `test_progress.py` (1) — 10 cases.
+Baseline as of the 2026-09-06 merge: **118 passed, 10 failed** — any new failure beyond
+those three files is a real regression. (Was 90 passed before that merge; upstream added
+28 tests that pass here.)
 
 ## Runtime prerequisites (macOS)
 
