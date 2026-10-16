@@ -1,6 +1,6 @@
 # Loki fork — Kokoro-only dependency set (KB-0358).
 #
-# This is sanctioned divergence #1 of 3 (see LOKI-FORK.md). Upstream's
+# This is sanctioned divergence #1 of 5 (see LOKI-FORK.md). Upstream's
 # requirements.txt bundles all 7 TTS engines — git-only deps, a custom
 # find-links index, and --no-deps ordering hacks around torch/numpy/
 # transformers conflicts. Engine libs are lazy-imported, so installing
@@ -22,9 +22,15 @@ pydantic>=2.5.0
 # Database
 sqlalchemy>=2.0.0
 
-# ML runtime (Kokoro is a torch model; no transformers/accelerate needed)
+# ML runtime. Kokoro itself is a torch model, but kokoro pulls transformers in
+# transitively, and upstream's load-time offline guard
+# (utils/hf_offline_patch.py::force_offline_if_cached) reads
+# transformers.utils.hub._is_offline_mode, which transformers 5.x dropped. Unpinned,
+# every /generate/sync returns 500 (KB-1195). transformers 4.57 in turn refuses to
+# import against huggingface_hub 1.x, so the two pins travel together.
 torch>=2.2.0
-huggingface_hub>=0.20.0
+transformers<=4.57.6
+huggingface_hub>=0.20.0,<1.0
 
 # Kokoro TTS (82M) — the one engine Loki runs
 kokoro>=0.9.4
