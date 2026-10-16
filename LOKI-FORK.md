@@ -43,7 +43,9 @@ Anything beyond these requires a wiki decision note in `~/loki/wiki/decisions/` 
    `/generations` preview path) and a malformed chain is warned-and-skipped, never fatal. The
    route (divergence-owned) holds the fetch-from-profile policy; the touch to the upstream-owned
    service is a single backward-compatible optional param. **Inert until a profile actually sets
-   an `effects_chain`** (the "Loki" profile has none today — this only enables the capability).
+   an `effects_chain`** — and it is LIVE: the "Loki" profile carries a highpass (85 Hz) +
+   compressor chain (verified 2026-10-14, KB-1195). A wrong resolution of the `generation.py`
+   merge conflict here changes the voice silently.
    Tests: `backend/tests/test_generate_sync.py` (effects pass-through + graceful-skip cases).
    Rationale: `~/loki/wiki/decisions/voicebox-fork-divergence-5-sync-effects.md`.
 
@@ -61,7 +63,8 @@ backend/venv/bin/python -m pytest backend/tests/ -q <the --ignore list below>
 git push origin loki
 ```
 
-Then restart the daemon: `launchctl kickstart -k gui/$UID/com.loki.voicebox`.
+Then restart the daemon: `~/loki/bin/restart-daemon.sh com.loki.voicebox`. After the 2026-10-16 merge the
+DB runs in WAL mode — back it up with `sqlite3 ... .backup`, never a bare file copy.
 
 ## Running the test suite under requirements-loki.txt
 
@@ -95,12 +98,21 @@ that says `1 error in 3.01s` never ran.
 top-level imports that collide with the package layout; verified 2026-07-09, both invocation
 modes. Not a fork regression.)
 
-Known-failing under requirements-loki.txt (verified identical on pristine upstream, 2026-07-09 —
-they exercise the transformers/HF offline-patch layer that the Kokoro-only dep set omits):
-`test_offline_guard.py` (5), `test_offline_patch.py` (4), `test_progress.py` (1) — 10 cases.
-Baseline as of the 2026-09-06 merge: **118 passed, 10 failed** — any new failure beyond
-those three files is a real regression. (Was 90 passed before that merge; upstream added
-28 tests that pass here.)
+Baseline as of the 2026-10-16 upstream merge (v0.6.0, KB-1195), run with the
+`requirements-loki.txt` pins (`transformers<=4.57.6`, `huggingface_hub<1.0`) installed:
+**287 passed, 2 failed, 6 skipped**. The two failures are pre-existing on pristine upstream and
+not fork regressions: `test_omnivoice_compat.py::test_declared_languages_are_resolvable_by_omnivoice`
+(omnivoice is absent) and `test_progress.py::test_hf_progress_tracker`. Any new failure is real.
+
+**Do not run this suite on an unpinned venv and call the failures "known".** Until KB-1195 this
+file listed `test_offline_guard.py` / `test_offline_patch.py` / `test_progress.py` as harmless
+"offline-patch layer" failures. After the 2026-10-04 upstream release the offline guard sits in
+the model-load path, so on `transformers` 5.x (which `kokoro` pulls in) every `/generate/sync`
+returns 500 — the same 17 tests, now a live outage. A failing test list is a claim about a
+dependency; re-read it on every merge.
+
+Before landing any upstream merge, boot it: spare port, a `sqlite3 .backup` copy of the live data
+dir, one real `/generate/sync` against the `Loki` profile.
 
 ## Runtime prerequisites (macOS)
 
