@@ -2,7 +2,7 @@
 
 This is Loki's maintained fork of [jamiepine/voicebox](https://github.com/jamiepine/voicebox)
 (KB-0358). Only the **backend** runs — headless, as a launchd daemon on Chris's Mac, serving
-Loki's TTS through `POST /generate/sync`. The Tauri/React GUI stays in-tree untouched (deleting
+Loki's TTS through upstream's OpenAI-compatible `POST /v1/audio/speech`. The Tauri/React GUI stays in-tree untouched (deleting
 it would buy nothing at runtime and cost every upstream merge).
 
 ## Branch discipline
@@ -10,17 +10,16 @@ it would buy nothing at runtime and cost every upstream merge).
 - **`loki`** — the branch we run. Default branch of this fork. Carries the divergences below.
 - **`main`** — pristine mirror of `upstream/main`. Never commit here.
 
-## Divergence budget — exactly five sanctioned changes
+## Divergence budget — exactly three sanctioned changes (#1, #3, #4)
 
 Anything beyond these requires a wiki decision note in `~/loki/wiki/decisions/` first.
+
+Numbers are stable on purpose (the decision notes and `KB-` cards cite them), so the retired
+ones leave gaps rather than renumbering the rest. **#2 and #5 are retired, see below.**
 
 1. **`backend/requirements-loki.txt`** — Kokoro-only dependency set. Engine libs are
    lazy-imported, so the server boots and serves Kokoro without the other six engines'
    dependency minefield (git-only deps, custom find-links, `--no-deps` ordering hacks).
-2. **`POST /generate/sync`** (`backend/routes/generate_sync.py` + 2 registration lines in
-   `routes/__init__.py`) — synchronous, non-persisted TTS returning WAV bytes. Thin route over
-   the pre-existing `services.generation.generate_audio_sync()` (which upstream orphaned).
-   Tests: `backend/tests/test_generate_sync.py`.
 3. **Registry-derived engine enums** — schema validation reads `TTS_ENGINES` instead of
    hand-copied `pattern=` regexes. (Candidate for an upstream PR — if accepted, this diff
    disappears.)
@@ -34,20 +33,56 @@ Anything beyond these requires a wiki decision note in `~/loki/wiki/decisions/` 
    profile's `preset_voice_id` (upstream re-reads it from the DB row, ignores the request body)
    — to change a preset profile's voice, delete and recreate it. Not patched — out of the
    decision note's scope; revisit if it becomes a recurring friction.
-5. **Effects chain on the synchronous path** (`routes/generate_sync.py` reads the resolved
-   profile's `effects_chain` and passes it to `services/generation.py::generate_audio_sync`,
-   which gains an additive optional `effects_chain` param + a guarded `apply_effects()` call).
-   Upstream applies its pedalboard effects (pitch_shift, reverb, delay, chorus, compressor,
-   gain, highpass, lowpass) only on the async studio generation (`run_generation`/`_save_generate`);
-   `/generate/sync` skipped them entirely. Effects run before normalize (matching the
-   `/generations` preview path) and a malformed chain is warned-and-skipped, never fatal. The
-   route (divergence-owned) holds the fetch-from-profile policy; the touch to the upstream-owned
-   service is a single backward-compatible optional param. **Inert until a profile actually sets
-   an `effects_chain`** — and it is LIVE: the "Loki" profile carries a highpass (85 Hz) +
-   compressor chain (verified 2026-10-14, KB-1195). A wrong resolution of the `generation.py`
-   merge conflict here changes the voice silently.
-   Tests: `backend/tests/test_generate_sync.py` (effects pass-through + graceful-skip cases).
-   Rationale: `~/loki/wiki/decisions/voicebox-fork-divergence-5-sync-effects.md`.
+
+### Retired divergences (KB-1204, 2026-11-08)
+
+- **#2 `POST /generate/sync`** (`routes/generate_sync.py` + 2 registration lines in
+  `routes/__init__.py`, tests `test_generate_sync.py`) — deleted. Upstream's `POST /v1/audio/speech`
+  (`routes/openai_compat.py`) is the same contract: synchronous, persists nothing, WAV bytes back.
+  Loki's clients moved to it on 2026-10-16 (Phase A); `routes/__init__.py` is byte-identical to
+  upstream again.
+- **#5 Effects chain on the synchronous path** (the additive `effects_chain` param + guarded
+  `apply_effects()` call in `services/generation.py::generate_audio_sync`) — deleted.
+  `_create_speech` applies the profile's stored `effects_chain` itself, before normalise, so the
+  live "Loki" profile (highpass 85 Hz + compressor) is still shaped. `services/generation.py` is
+  byte-identical to upstream again.
+- Rationale: `~/loki/wiki/decisions/voicebox-fork-divergence-5-sync-effects.md` (marked
+  Superseded). #2 was sanctioned with the fork itself (KB-0358) and never had its own note.
+  **`/generate/sync` no longer exists: a client that still posts there gets a 404.**
+- Verified before landing (KB-1204): boot on a spare port against a `sqlite3 .backup` copy of the
+  live data dir; old route and new route agree on duration, loudness (-20.00 dBFS), spectral
+  centroid and sub-85 Hz energy within run-to-run spread, and a no-effects control moves the
+  centroid by ~300 Hz, so the comparison could have failed. Synthesis is non-deterministic: compare
+  measurements against the same route's own spread, never bytes.
+
+**Two trade-offs we accepted by retiring these** (Chris, 2026-10-30; the 15-minute health probe
+`bin/check-voicebox-health.py` is the backstop for both):
+
+1. *Effects-chain robustness.* The old route validated the chain and SKIPPED an invalid one (never
+   a 500). Upstream's route catches only a JSON parse error, so an unknown effect, an out-of-range
+   compressor ratio, or a dict where a list belongs is a **500 on every utterance**, which falls
+   Loki to `macos_say`. Reachable only by editing the DB directly (`PUT /profiles` validates on
+   save) or if a pedalboard/upstream change tightens a range. Re-read this after every merge that
+   touches `utils/effects.py`.
+2. *Request-time HuggingFace cache gate.* Upstream checks the model cache on EVERY request: an
+   orphan `*.incomplete` blob or a missing `snapshots/` directory under
+   `models--hexgrad--Kokoro-82M` returns 400 even when the model is already in RAM. The old route
+   only needed the cache at load time.
+
+**Smaller behavioural differences between the old route and upstream's** (audited, none matter to
+Loki's clients, which branch only on HTTP 200 vs not): input cap **10,000 chars** (old: 50,000;
+`lib/tts/synth.sh` documents why that costs nothing at Kokoro speeds); the synthesis language comes
+from the *profile* (old: the request's `language`, default `en`; the live `Loki` profile stores
+`en`); an unknown profile is 400 `voice_not_found` (old: 404) and a bad body is 400 (old: 422), in
+OpenAI's `{"error": ...}` shape; no `seed` and no `X-Voicebox-Engine` / `X-Voicebox-Profile`
+response headers; engine resolves through the model alias (`tts-1` = the profile's own engine).
+
+**What now guards the voice.** The fork suite no longer has a test that the profile's effects chain
+reaches the audio (the deleted `test_generate_sync.py` had the only three). Loki's
+`tests/test_voicebox_effects_order.py` reads `routes/openai_compat.py` and fails if
+`_create_speech` stops applying `profile.effects_chain` or applies it after `normalize_audio`.
+After ANY upstream merge, boot-trial it (spare port, a `sqlite3 .backup` copy of the live data
+dir) and compare against a no-effects control; a green suite alone does not prove the voice.
 
 ## Update ritual (rolling upstream in)
 
@@ -56,7 +91,7 @@ cd ~/loki/vendor/voicebox
 git fetch upstream
 git checkout main && git merge --ff-only upstream/main && git push origin main
 git checkout loki && git merge main
-# On conflict: our 4 divergences win in their own files; upstream wins everywhere else.
+# On conflict: our 3 divergences win in their own files; upstream wins everywhere else.
 # Check database/migrations.py diffs by hand — upstream migrations are version-less
 # idempotent column checks; we never modify upstream-owned tables (schema-ownership rule).
 backend/venv/bin/python -m pytest backend/tests/ -q <the --ignore list below>
@@ -98,21 +133,24 @@ that says `1 error in 3.01s` never ran.
 top-level imports that collide with the package layout; verified 2026-07-09, both invocation
 modes. Not a fork regression.)
 
-Baseline as of the 2026-10-16 upstream merge (v0.6.0, KB-1195), run with the
+Baseline as of KB-1204 (2026-11-08, on top of the 2026-10-16 v0.6.0 merge, KB-1195), run with the
 `requirements-loki.txt` pins (`transformers<=4.57.6`, `huggingface_hub<1.0`) installed:
-**287 passed, 2 failed, 6 skipped**. The two failures are pre-existing on pristine upstream and
+**276 passed, 2 failed, 6 skipped** (was 287 before the 11 `test_generate_sync.py` tests went
+with divergences #2 and #5). The two failures are pre-existing on pristine upstream and
 not fork regressions: `test_omnivoice_compat.py::test_declared_languages_are_resolvable_by_omnivoice`
 (omnivoice is absent) and `test_progress.py::test_hf_progress_tracker`. Any new failure is real.
 
 **Do not run this suite on an unpinned venv and call the failures "known".** Until KB-1195 this
 file listed `test_offline_guard.py` / `test_offline_patch.py` / `test_progress.py` as harmless
 "offline-patch layer" failures. After the 2026-10-04 upstream release the offline guard sits in
-the model-load path, so on `transformers` 5.x (which `kokoro` pulls in) every `/generate/sync`
-returns 500 — the same 17 tests, now a live outage. A failing test list is a claim about a
+the model-load path, so on `transformers` 5.x (which `kokoro` pulls in) every synchronous
+generation (then `/generate/sync`, now `/v1/audio/speech`) returns 500 — the same 17 tests, now a
+live outage. A failing test list is a claim about a
 dependency; re-read it on every merge.
 
 Before landing any upstream merge, boot it: spare port, a `sqlite3 .backup` copy of the live data
-dir, one real `/generate/sync` against the `Loki` profile.
+dir, one real `POST /v1/audio/speech` (`{"model":"tts-1","input":...,"voice":"Loki","response_format":"wav"}`)
+against the `Loki` profile.
 
 ## Runtime prerequisites (macOS)
 
